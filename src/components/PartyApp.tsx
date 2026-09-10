@@ -13,6 +13,7 @@ import { VoteQuestionCard } from "@/components/VoteQuestionCard";
 import { api } from "@/lib/client-api";
 import { getLevel } from "@/lib/levels";
 import {
+  CATEGORY_INTRO,
   CATEGORY_META,
   type ChallengeItem,
   type CompleteChallengeResponse,
@@ -29,6 +30,27 @@ type Tab = "challenges" | "vote" | "leaderboard";
 
 const CATEGORIES: ChallengeItem["category"][] = ["EASY", "SOCIAL", "DANCE", "TRY_SOMETHING_NEW", "CHAOS"];
 
+// A category can hold dozens of challenges — showing all of them at once
+// reads like homework. Show a small rotating preview instead; "See all"
+// still gets you the full list.
+const CURATED_SIZE = 6;
+
+function shuffleArray<T>(items: T[]): T[] {
+  return [...items].sort(() => Math.random() - 0.5);
+}
+
+/** Prefers not-yet-completed challenges, and challenges not already shown. */
+function pickCurated(pool: ChallengeItem[], size: number, avoidIds: Set<string>): ChallengeItem[] {
+  const rank = (items: ChallengeItem[]) => {
+    const fresh = shuffleArray(items.filter((c) => !avoidIds.has(c.id)));
+    const seen = shuffleArray(items.filter((c) => avoidIds.has(c.id)));
+    return [...fresh, ...seen];
+  };
+  const notMaxed = rank(pool.filter((c) => !c.isMaxed));
+  const maxed = rank(pool.filter((c) => c.isMaxed));
+  return [...notMaxed, ...maxed].slice(0, size);
+}
+
 export function PartyApp({
   slug,
   initialGuest,
@@ -44,6 +66,8 @@ export function PartyApp({
   const [tab, setTab] = useState<Tab>("challenges");
   const [category, setCategory] = useState<ChallengeItem["category"]>("EASY");
   const [challenges, setChallenges] = useState<ChallengeItem[]>([]);
+  const [curatedIds, setCuratedIds] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState(false);
   const [openChallenge, setOpenChallenge] = useState<ChallengeItem | null>(null);
   const [pointsDelta, setPointsDelta] = useState(0);
   const [pointsTrigger, setPointsTrigger] = useState(0);
@@ -55,6 +79,8 @@ export function PartyApp({
   const [voteSeen, setVoteSeen] = useState(false);
   const [partyStatus, setPartyStatus] = useState(initialPartyStatus);
 
+  const filteredChallenges = challenges.filter((c) => c.category === category);
+
   const loadChallenges = useCallback(() => {
     if (!guest) return;
     api.challenges(slug).then((res) => setChallenges(res.challenges)).catch(() => {});
@@ -63,6 +89,20 @@ export function PartyApp({
   useEffect(() => {
     loadChallenges();
   }, [loadChallenges]);
+
+  useEffect(() => {
+    setExpanded(false);
+    const pool = challenges.filter((c) => c.category === category);
+    setCuratedIds(pickCurated(pool, CURATED_SIZE, new Set()).map((c) => c.id));
+    // Re-picks on category change, and once when challenges first arrive —
+    // not on every challenges refresh, so completing one doesn't reshuffle
+    // the preview out from under the guest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, challenges.length > 0]);
+
+  function shuffleCurated() {
+    setCuratedIds(pickCurated(filteredChallenges, CURATED_SIZE, new Set(curatedIds)).map((c) => c.id));
+  }
 
   useEffect(() => {
     if (!guest) return;
@@ -131,7 +171,12 @@ export function PartyApp({
   }
 
   const level = getLevel(guest.points);
-  const filteredChallenges = challenges.filter((c) => c.category === category);
+  const intro = CATEGORY_INTRO[category];
+  const curatedChallenges = curatedIds
+    .map((id) => filteredChallenges.find((c) => c.id === id))
+    .filter((c): c is ChallengeItem => Boolean(c));
+  const visibleChallenges = expanded ? filteredChallenges : curatedChallenges;
+  const hasMore = filteredChallenges.length > visibleChallenges.length;
 
   return (
     <div className="min-h-screen pb-28">
@@ -203,14 +248,52 @@ export function PartyApp({
               })}
             </div>
 
+            <div className="mb-3">
+              <div className="text-lg font-black text-white">{intro.heading}</div>
+              <div className="text-sm text-white/50">{intro.subheading}</div>
+            </div>
+
             <div className="space-y-3">
-              {filteredChallenges.map((c) => (
+              {visibleChallenges.map((c) => (
                 <ChallengeCard key={c.id} challenge={c} onOpen={setOpenChallenge} />
               ))}
               {filteredChallenges.length === 0 && (
                 <div className="py-10 text-center text-white/40">Nothing here yet — try another category.</div>
               )}
             </div>
+
+            {filteredChallenges.length > CURATED_SIZE && (
+              <div className="mt-4 flex gap-2">
+                {!expanded ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={shuffleCurated}
+                      className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-semibold text-white active:scale-[0.98]"
+                    >
+                      🎲 Give me another
+                    </button>
+                    {hasMore && (
+                      <button
+                        type="button"
+                        onClick={() => setExpanded(true)}
+                        className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-semibold text-white active:scale-[0.98]"
+                      >
+                        See all {filteredChallenges.length}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(false)}
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-semibold text-white active:scale-[0.98]"
+                  >
+                    Show fewer
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
 

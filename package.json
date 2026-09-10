@@ -12,6 +12,7 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx src/db/seed.ts",
+    "db:sync-challenges": "tsx src/db/sync-challenges.ts",
     "test": "vitest run"
   },
   "dependencies": {

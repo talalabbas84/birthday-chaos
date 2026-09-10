@@ -8,15 +8,24 @@ websockets/Redis/third-party auth.
 
 ## Surfaces
 
-- `/party/[slug]` — guest mobile app (join → challenges / vote / leaderboard)
+- `/party/[slug]` — guest mobile app (join → challenges / vote / leaderboard).
+  Each category has more challenges than fit on one screen, so guests see a
+  curated preview (6 at a time) with **🎲 Give me another** to reshuffle and
+  **See all** to expand the full list — variety without a 20-item checklist.
 - `/party/[slug]/display` — fullscreen laptop scoreboard (rotates automatically)
 - `/host/[slug]` — passcode-protected host controls
 - `/admin` — **no passcode**, data cleanup dashboard (see below)
 
 ## Testing data & cleanup
 
-`/admin` lists every party with guest/completion/point counts and two buttons:
+`/admin` lists every party with guest/completion/point counts and three buttons:
 
+- **Sync new challenges (safe)** — adds any challenges/vote questions from
+  `src/db/seed-data.ts` that this party doesn't already have yet (matched by
+  title). Never touches guests, scores, or existing challenges — this is the
+  one to use whenever you add more challenges to the code and want them to
+  show up without resetting anyone's progress. Same as `npm run
+  db:sync-challenges`.
 - **Reset test data** — deletes all guests (and everything that cascades off
   them: completions, completion-people, votes), then puts the party back to a
   fresh `LIVE` state. Challenges and vote questions are untouched. This is the

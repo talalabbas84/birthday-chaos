@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { challengeCompletions, guests, parties } from "@/db/schema";
-import { seedParty } from "@/db/seed-party";
+import { seedParty, syncChallengeCatalog, type SyncResult } from "@/db/seed-party";
 import { ApiError } from "@/lib/api";
 
 export type AdminPartySummary = {
@@ -78,4 +78,16 @@ export async function reseedPartyFromScratch(partyId: string): Promise<string> {
 
   const recreated = await seedParty(party.slug, party.name);
   return recreated.slug;
+}
+
+/**
+ * Adds any new challenges/vote questions from the seed data that this party
+ * doesn't already have yet — safe to run anytime, never touches guests,
+ * scores, or existing challenges.
+ */
+export async function syncNewChallenges(partyId: string): Promise<SyncResult> {
+  const [party] = await db.select().from(parties).where(eq(parties.id, partyId)).limit(1);
+  if (!party) throw new ApiError(404, "Party not found", "Couldn't find that party.");
+
+  return syncChallengeCatalog(party.slug);
 }

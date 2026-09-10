@@ -140,3 +140,17 @@ export const CATEGORY_META: Record<
   TRY_SOMETHING_NEW: { label: "Try Something New", emoji: "🪩" },
   CHAOS: { label: "Chaos", emoji: "🔥" },
 };
+
+export const CATEGORY_INTRO: Record<
+  ChallengeItem["category"],
+  { heading: string; subheading: string }
+> = {
+  EASY: { heading: "Something easy 🟢", subheading: "Low pressure, high reward." },
+  SOCIAL: { heading: "Meet people 🤝", subheading: "Here are some ideas..." },
+  DANCE: { heading: "Hit the floor 💃", subheading: "Here are some ideas..." },
+  TRY_SOMETHING_NEW: {
+    heading: "Try something new 🪩",
+    subheading: "No experience required — everyone's welcome here.",
+  },
+  CHAOS: { heading: "Feeling dangerous? 🔥", subheading: "Here are some ideas..." },
+};

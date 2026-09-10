@@ -51,6 +51,24 @@ export function AdminDashboard({ initialParties }: { initialParties: AdminPartyS
     }
   }
 
+  async function handleSyncChallenges(party: AdminPartySummary) {
+    setBusyId(party.id);
+    setMessage(null);
+    try {
+      const res = await adminApi.syncChallenges(party.id);
+      setMessage(
+        res.addedChallenges === 0 && res.addedQuestions === 0
+          ? `"${party.name}" already has every challenge/vote question in the code — nothing to add.`
+          : `Added ${res.addedChallenges} new challenge(s) and ${res.addedQuestions} new vote question(s) to "${party.name}". Guests and scores untouched.`,
+      );
+      refresh();
+    } catch (e) {
+      setMessage(e instanceof ClientApiError ? e.message : "That didn't work.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-2xl px-5 py-8">
       <h1 className="text-2xl font-black text-white">Admin — data cleanup</h1>
@@ -102,6 +120,14 @@ export function AdminDashboard({ initialParties }: { initialParties: AdminPartyS
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busyId === party.id}
+                onClick={() => handleSyncChallenges(party)}
+                className="rounded-xl bg-chaos-green/20 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                Sync new challenges (safe)
+              </button>
               <button
                 type="button"
                 disabled={busyId === party.id}

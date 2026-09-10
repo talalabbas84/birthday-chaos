@@ -122,4 +122,10 @@ export const adminApi = {
 
   reseed: (partyId: string) =>
     request<{ ok: true; slug: string }>(`/api/admin/parties/${partyId}/reseed`, { method: "POST" }),
+
+  syncChallenges: (partyId: string) =>
+    request<{ ok: true; addedChallenges: number; addedQuestions: number }>(
+      `/api/admin/parties/${partyId}/sync-challenges`,
+      { method: "POST" },
+    ),
 };
