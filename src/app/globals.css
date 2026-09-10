@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: #0b0518;
+  color: #f5f0ff;
+  overscroll-behavior-y: contain;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+.glow-card {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 30px rgba(139, 61, 255, 0.15);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
