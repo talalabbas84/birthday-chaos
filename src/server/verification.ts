@@ -43,29 +43,31 @@ export async function respondToVerification(
   respondingGuestId: string,
   action: VerificationAction,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [row] = await tx
-      .select({ id: challengeCompletionPeople.id, guestId: challengeCompletionPeople.guestId, completionId: challengeCompletionPeople.completionId })
-      .from(challengeCompletionPeople)
-      .where(eq(challengeCompletionPeople.id, personRowId))
-      .limit(1);
+  const [row] = await db
+    .select({
+      id: challengeCompletionPeople.id,
+      guestId: challengeCompletionPeople.guestId,
+      completionId: challengeCompletionPeople.completionId,
+    })
+    .from(challengeCompletionPeople)
+    .where(eq(challengeCompletionPeople.id, personRowId))
+    .limit(1);
 
-    if (!row) throw new ApiError(404, "Not found", "That check has already been handled.");
-    if (row.guestId !== respondingGuestId) {
-      throw new ApiError(403, "Not yours", "That quick check isn't for you.");
-    }
+  if (!row) throw new ApiError(404, "Not found", "That check has already been handled.");
+  if (row.guestId !== respondingGuestId) {
+    throw new ApiError(403, "Not yours", "That quick check isn't for you.");
+  }
 
-    const personStatus = action === "confirm" ? "CONFIRMED" : action === "dispute" ? "DISPUTED" : "SKIPPED";
-    await tx
-      .update(challengeCompletionPeople)
-      .set({ confirmationStatus: personStatus })
-      .where(eq(challengeCompletionPeople.id, personRowId));
+  const personStatus = action === "confirm" ? "CONFIRMED" : action === "dispute" ? "DISPUTED" : "SKIPPED";
+  await db
+    .update(challengeCompletionPeople)
+    .set({ confirmationStatus: personStatus })
+    .where(eq(challengeCompletionPeople.id, personRowId));
 
-    if (action !== "skip") {
-      await tx
-        .update(challengeCompletions)
-        .set({ verificationStatus: action === "confirm" ? "CONFIRMED" : "DISPUTED" })
-        .where(eq(challengeCompletions.id, row.completionId));
-    }
-  });
+  if (action !== "skip") {
+    await db
+      .update(challengeCompletions)
+      .set({ verificationStatus: action === "confirm" ? "CONFIRMED" : "DISPUTED" })
+      .where(eq(challengeCompletions.id, row.completionId));
+  }
 }

@@ -5,8 +5,6 @@ import { ApiError } from "@/lib/api";
 import { getCrossedLevel, type Level } from "@/lib/levels";
 import { cleanDisplayName, normalizeExternalName } from "@/lib/normalize";
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
 export type PersonInput = { guestId?: string; externalName?: string };
 
 export type CompleteChallengeInput = {
@@ -27,6 +25,13 @@ export type CompleteChallengeResult = {
 
 const UNIQUE_VIOLATION = "23505";
 
+// Neon's HTTP driver (required for reliable serverless/Vercel behavior —
+// see db/client.ts) has no interactive multi-statement transactions, so the
+// steps below run as plain sequential statements rather than inside
+// db.transaction(). The unique constraint on requestId still makes the
+// double-submit case safe; the very small remaining race window (two
+// near-simultaneous requests both passing the maxCompletions check before
+// either inserts) is an acceptable trade-off for a casual party game.
 export async function completeChallenge(input: CompleteChallengeInput): Promise<CompleteChallengeResult> {
   const requestId = input.requestId?.trim();
   if (!requestId) {
@@ -50,130 +55,128 @@ async function runCompletion(
   input: CompleteChallengeInput,
   requestId: string,
 ): Promise<CompleteChallengeResult> {
-  return db.transaction(async (tx) => {
-    const [existing] = await tx
-      .select({ id: challengeCompletions.id })
-      .from(challengeCompletions)
-      .where(eq(challengeCompletions.requestId, requestId))
-      .limit(1);
-    if (existing) {
-      const result = await loadExistingByRequestId(requestId, tx);
-      if (result) return result;
-    }
+  const [existing] = await db
+    .select({ id: challengeCompletions.id })
+    .from(challengeCompletions)
+    .where(eq(challengeCompletions.requestId, requestId))
+    .limit(1);
+  if (existing) {
+    const result = await loadExistingByRequestId(requestId);
+    if (result) return result;
+  }
 
-    const [party] = await tx.select().from(parties).where(eq(parties.id, input.partyId)).limit(1);
-    if (!party) throw new ApiError(404, "Party not found", "This party doesn't exist.");
-    if (party.status !== "LIVE") {
-      throw new ApiError(409, "Not right now", "Hang tight — the party isn't live right now.");
-    }
+  const [party] = await db.select().from(parties).where(eq(parties.id, input.partyId)).limit(1);
+  if (!party) throw new ApiError(404, "Party not found", "This party doesn't exist.");
+  if (party.status !== "LIVE") {
+    throw new ApiError(409, "Not right now", "Hang tight — the party isn't live right now.");
+  }
 
-    const [guest] = await tx.select().from(guests).where(eq(guests.id, input.guestId)).limit(1);
-    if (!guest || guest.partyId !== input.partyId || !guest.active) {
-      throw new ApiError(403, "Guest not found", "We couldn't find your profile for this party.");
-    }
+  const [guest] = await db.select().from(guests).where(eq(guests.id, input.guestId)).limit(1);
+  if (!guest || guest.partyId !== input.partyId || !guest.active) {
+    throw new ApiError(403, "Guest not found", "We couldn't find your profile for this party.");
+  }
 
-    const [challenge] = await tx.select().from(challenges).where(eq(challenges.id, input.challengeId)).limit(1);
-    if (!challenge || challenge.partyId !== input.partyId || !challenge.active) {
-      throw new ApiError(404, "Challenge not found", "That challenge isn't available anymore.");
-    }
+  const [challenge] = await db.select().from(challenges).where(eq(challenges.id, input.challengeId)).limit(1);
+  if (!challenge || challenge.partyId !== input.partyId || !challenge.active) {
+    throw new ApiError(404, "Challenge not found", "That challenge isn't available anymore.");
+  }
 
-    const [{ count: existingCount }] = await tx
-      .select({ count: sql<number>`count(*)::int` })
-      .from(challengeCompletions)
+  const [{ count: existingCount }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(challengeCompletions)
+    .where(
+      and(
+        eq(challengeCompletions.guestId, guest.id),
+        eq(challengeCompletions.challengeId, challenge.id),
+      ),
+    );
+  if (existingCount >= challenge.maxCompletions) {
+    throw new ApiError(
+      409,
+      "ENOUGH 😂",
+      `You've already done this one ${challenge.maxCompletions} time${challenge.maxCompletions === 1 ? "" : "s"}.`,
+    );
+  }
+
+  const candidates = await resolvePeople(party.id, guest.id, input.people);
+
+  if (challenge.requiresPerson && candidates.length === 0) {
+    throw new ApiError(400, "Who was it with?", "This one needs at least one other person.");
+  }
+
+  if (challenge.uniquePersonRequired && candidates.length > 0) {
+    const priorPeople = await db
+      .select({
+        guestId: challengeCompletionPeople.guestId,
+        normalizedExternalName: challengeCompletionPeople.normalizedExternalName,
+      })
+      .from(challengeCompletionPeople)
+      .innerJoin(
+        challengeCompletions,
+        eq(challengeCompletionPeople.completionId, challengeCompletions.id),
+      )
       .where(
         and(
           eq(challengeCompletions.guestId, guest.id),
           eq(challengeCompletions.challengeId, challenge.id),
         ),
       );
-    if (existingCount >= challenge.maxCompletions) {
-      throw new ApiError(
-        409,
-        "ENOUGH 😂",
-        `You've already done this one ${challenge.maxCompletions} time${challenge.maxCompletions === 1 ? "" : "s"}.`,
+
+    for (const candidate of candidates) {
+      const reused = priorPeople.some((prior) =>
+        candidate.guestId
+          ? prior.guestId === candidate.guestId
+          : prior.normalizedExternalName === candidate.normalizedExternalName,
       );
-    }
-
-    const candidates = await resolvePeople(tx, party.id, guest.id, input.people);
-
-    if (challenge.requiresPerson && candidates.length === 0) {
-      throw new ApiError(400, "Who was it with?", "This one needs at least one other person.");
-    }
-
-    if (challenge.uniquePersonRequired && candidates.length > 0) {
-      const priorPeople = await tx
-        .select({
-          guestId: challengeCompletionPeople.guestId,
-          normalizedExternalName: challengeCompletionPeople.normalizedExternalName,
-        })
-        .from(challengeCompletionPeople)
-        .innerJoin(
-          challengeCompletions,
-          eq(challengeCompletionPeople.completionId, challengeCompletions.id),
-        )
-        .where(
-          and(
-            eq(challengeCompletions.guestId, guest.id),
-            eq(challengeCompletions.challengeId, challenge.id),
-          ),
+      if (reused) {
+        throw new ApiError(
+          409,
+          "Nice try 👀",
+          `You've already counted ${candidate.displayName} for this one. Pick somebody new.`,
         );
-
-      for (const candidate of candidates) {
-        const reused = priorPeople.some((prior) =>
-          candidate.guestId
-            ? prior.guestId === candidate.guestId
-            : prior.normalizedExternalName === candidate.normalizedExternalName,
-        );
-        if (reused) {
-          throw new ApiError(
-            409,
-            "Nice try 👀",
-            `You've already counted ${candidate.displayName} for this one. Pick somebody new.`,
-          );
-        }
       }
     }
+  }
 
-    const [completion] = await tx
-      .insert(challengeCompletions)
-      .values({
-        partyId: party.id,
-        guestId: guest.id,
-        challengeId: challenge.id,
-        requestId,
-        pointsAwarded: challenge.points,
-        verificationStatus: candidates.some((c) => c.guestId) ? "UNVERIFIED" : "NOT_REQUIRED",
-      })
-      .returning();
-
-    if (candidates.length > 0) {
-      await tx.insert(challengeCompletionPeople).values(
-        candidates.map((c) => ({
-          completionId: completion.id,
-          guestId: c.guestId ?? null,
-          externalPersonName: c.externalName ?? null,
-          normalizedExternalName: c.normalizedExternalName ?? null,
-          confirmationStatus: c.guestId ? ("UNVERIFIED" as const) : ("NOT_REQUIRED" as const),
-        })),
-      );
-    }
-
-    const [updatedGuest] = await tx
-      .update(guests)
-      .set({ points: sql`${guests.points} + ${challenge.points}` })
-      .where(eq(guests.id, guest.id))
-      .returning({ points: guests.points });
-
-    const levelUp = getCrossedLevel(guest.points, updatedGuest.points);
-
-    return {
+  const [completion] = await db
+    .insert(challengeCompletions)
+    .values({
+      partyId: party.id,
+      guestId: guest.id,
+      challengeId: challenge.id,
+      requestId,
       pointsAwarded: challenge.points,
-      totalPoints: updatedGuest.points,
-      levelUp,
-      challengeTitle: challenge.title,
-      alreadySubmitted: false,
-    };
-  });
+      verificationStatus: candidates.some((c) => c.guestId) ? "UNVERIFIED" : "NOT_REQUIRED",
+    })
+    .returning();
+
+  if (candidates.length > 0) {
+    await db.insert(challengeCompletionPeople).values(
+      candidates.map((c) => ({
+        completionId: completion.id,
+        guestId: c.guestId ?? null,
+        externalPersonName: c.externalName ?? null,
+        normalizedExternalName: c.normalizedExternalName ?? null,
+        confirmationStatus: c.guestId ? ("UNVERIFIED" as const) : ("NOT_REQUIRED" as const),
+      })),
+    );
+  }
+
+  const [updatedGuest] = await db
+    .update(guests)
+    .set({ points: sql`${guests.points} + ${challenge.points}` })
+    .where(eq(guests.id, guest.id))
+    .returning({ points: guests.points });
+
+  const levelUp = getCrossedLevel(guest.points, updatedGuest.points);
+
+  return {
+    pointsAwarded: challenge.points,
+    totalPoints: updatedGuest.points,
+    levelUp,
+    challengeTitle: challenge.title,
+    alreadySubmitted: false,
+  };
 }
 
 type ResolvedPerson = {
@@ -184,7 +187,6 @@ type ResolvedPerson = {
 };
 
 async function resolvePeople(
-  tx: Tx,
   partyId: string,
   actingGuestId: string,
   people: PersonInput[],
@@ -195,7 +197,7 @@ async function resolvePeople(
 
   const nameById = new Map<string, string>();
   if (registeredIds.length > 0) {
-    const rows = await tx
+    const rows = await db
       .select({ id: guests.id, name: guests.name, partyId: guests.partyId, active: guests.active })
       .from(guests)
       .where(inArray(guests.id, registeredIds));
@@ -238,12 +240,8 @@ async function resolvePeople(
   return resolved;
 }
 
-async function loadExistingByRequestId(
-  requestId: string,
-  tx?: Tx,
-): Promise<CompleteChallengeResult | null> {
-  const client = tx ?? db;
-  const [row] = await client
+async function loadExistingByRequestId(requestId: string): Promise<CompleteChallengeResult | null> {
+  const [row] = await db
     .select({
       pointsAwarded: challengeCompletions.pointsAwarded,
       challengeTitle: challenges.title,

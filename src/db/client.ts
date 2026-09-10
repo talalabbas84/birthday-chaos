@@ -1,24 +1,16 @@
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-serverless";
-import ws from "ws";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is not set");
 }
 
-neonConfig.webSocketConstructor = ws;
+// Plain HTTP driver: one fetch per query, no persistent connection to keep
+// alive. This is the driver Neon recommends for serverless functions —
+// the WebSocket Pool driver doesn't reliably survive Vercel's freeze/thaw
+// lifecycle or Neon's scale-to-zero cold starts, which surfaces as
+// "Connection terminated unexpectedly" in production.
+const sql = neon(process.env.DATABASE_URL);
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __birthdayChaosPool: Pool | undefined;
-}
-
-// Reuse the pool across hot-reloads/warm serverless invocations instead of
-// opening a fresh websocket pool on every import.
-const pool = global.__birthdayChaosPool ?? new Pool({ connectionString: process.env.DATABASE_URL });
-if (process.env.NODE_ENV !== "production") {
-  global.__birthdayChaosPool = pool;
-}
-
-export const db = drizzle(pool, { schema });
+export const db = drizzle(sql, { schema });

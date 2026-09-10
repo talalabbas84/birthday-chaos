@@ -86,6 +86,16 @@ own party, run the real rules against it, and delete it afterwards.
 
 ## Notes / known trade-offs
 
+- **Database driver**: uses `drizzle-orm/neon-http` (plain HTTP, one request
+  per query) rather than the WebSocket `Pool`/`neon-serverless` driver. The
+  WebSocket driver doesn't reliably survive Vercel's serverless freeze/thaw
+  cycle or Neon's scale-to-zero cold starts and will intermittently throw
+  "Connection terminated unexpectedly". The trade-off is no interactive
+  multi-statement transactions — `completeChallenge` and
+  `respondToVerification` run as sequential statements instead. The unique
+  constraint on `requestId` still makes double-submits safe; the only
+  residual risk is a very small race window on `maxCompletions` under
+  simultaneous duplicate taps, an acceptable trade for a casual party game.
 - **Anonymous comments were dropped** from this build per request — the data
   model and "SAY SOMETHING ANONYMOUS" flow from the original spec are not
   implemented.
