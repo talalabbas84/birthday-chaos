@@ -46,13 +46,20 @@ data is finalized and you're done testing.
 
 ```bash
 npm install
-npm run db:push   # creates tables from src/db/schema.ts
-npm run db:seed   # creates the "virgo" party + all challenges + 5 vote questions
+npm run db:migrate   # creates tables from the committed drizzle/ migrations
+npm run db:seed      # creates the "virgo" party + all challenges + 5 vote questions
 ```
 
 Re-running `npm run db:seed` is safe — it deletes and recreates the party
 with the seeded slug (`SEED_PARTY_SLUG`, default `virgo`) each time, which is
 handy for resetting during development. It never touches other parties.
+
+If you change `src/db/schema.ts`, run `npm run db:generate` to create a new
+migration file in `drizzle/`, commit it, then `npm run db:migrate` to apply
+it locally. (`npm run db:push` still exists for quick schema-diff iteration
+against a throwaway dev database, but don't mix it with a database that also
+uses migrations — drizzle tracks applied migrations in a table, and `push`
+doesn't update that, so the two can drift out of sync.)
 
 ## 3. Run it
 
@@ -68,6 +75,20 @@ npm run dev
 
 Push to Vercel and set the same four environment variables in the project
 settings. No other infra is required — Neon + Vercel is the whole stack.
+
+**Migrations run automatically on every deployment**: `npm run build` is
+`npm run db:migrate && next build`, so every Vercel build applies any
+pending migrations in `drizzle/` to `DATABASE_URL` before building. This is
+what was missing initially (the very first deploy 500'd with `relation
+"parties" does not exist` because nothing had ever created the tables) —
+now schema changes just need a committed migration file and a normal git
+push. Seeding is **not** part of this and stays manual (`npm run db:seed`
+locally against the same `DATABASE_URL`, or the `/admin` "Full reseed"
+button) so a redeploy mid-party can never wipe live guest data.
+
+One consequence: `npm run build` now needs a **reachable** `DATABASE_URL`,
+not just a set one — locally, that means your Neon DB has to actually be
+online for `npm run build` (and therefore Vercel deploys) to succeed.
 
 ## Testing
 
